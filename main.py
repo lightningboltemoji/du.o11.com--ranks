@@ -5,7 +5,9 @@ from pathlib import Path
 import requests
 
 BASE_URL = "https://fn-service-habanero-live-public.ogs.live.on.epicgames.com/api/v1"
-TOKEN_URL = "https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token"
+TOKEN_URL = (
+    "https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token"
+)
 DEVICE_AUTH_PATH = Path(__file__).parent / ".device_auth.json"
 RANKS_PATH = Path(__file__).parent / "ranks.json"
 
@@ -29,11 +31,21 @@ PLAYERS = {
 
 # Division names for Fortnite ranked (0-indexed, 18 total divisions)
 DIVISIONS = [
-    "Bronze I", "Bronze II", "Bronze III",
-    "Silver I", "Silver II", "Silver III",
-    "Gold I", "Gold II", "Gold III",
-    "Platinum I", "Platinum II", "Platinum III",
-    "Diamond I", "Diamond II", "Diamond III",
+    "Bronze I",
+    "Bronze II",
+    "Bronze III",
+    "Silver I",
+    "Silver II",
+    "Silver III",
+    "Gold I",
+    "Gold II",
+    "Gold III",
+    "Platinum I",
+    "Platinum II",
+    "Platinum III",
+    "Diamond I",
+    "Diamond II",
+    "Diamond III",
     "Elite",
     "Champion",
     "Unreal",
@@ -106,7 +118,8 @@ def authenticate() -> str:
         print("Using saved device auth credentials...")
         try:
             token_data = _token_request(
-                ANDROID_CLIENT_ID, ANDROID_CLIENT_SECRET,
+                ANDROID_CLIENT_ID,
+                ANDROID_CLIENT_SECRET,
                 grant_type="device_auth",
                 account_id=device_auth["account_id"],
                 device_id=device_auth["device_id"],
@@ -115,17 +128,19 @@ def authenticate() -> str:
             print("Authenticated successfully.\n")
             return token_data["access_token"]
         except requests.HTTPError:
-            print("Device auth failed (password changed?). Falling back to auth code.\n")
+            print(
+                "Device auth failed (password changed?). Falling back to auth code.\n"
+            )
 
     # First-time setup: use authorization code with PC client
     auth_code = input(
-        "Enter your Epic Games authorization code\n"
-        f"(get one at: {AUTH_CODE_URL})\n> "
+        f"Enter your Epic Games authorization code\n(get one at: {AUTH_CODE_URL})\n> "
     )
 
     print("\nExchanging auth code for access token...")
     pc_token_data = _token_request(
-        PC_CLIENT_ID, PC_CLIENT_SECRET,
+        PC_CLIENT_ID,
+        PC_CLIENT_SECRET,
         grant_type="authorization_code",
         code=auth_code.strip(),
     )
@@ -137,7 +152,8 @@ def authenticate() -> str:
 
     print("Exchanging to Android client...")
     android_token_data = _token_request(
-        ANDROID_CLIENT_ID, ANDROID_CLIENT_SECRET,
+        ANDROID_CLIENT_ID,
+        ANDROID_CLIENT_SECRET,
         grant_type="exchange_code",
         exchange_code=exchange_code,
     )
@@ -172,7 +188,9 @@ def get_current_track_guid(access_token: str, ranking_type: str) -> str | None:
     return None
 
 
-def get_current_zero_build_rank(access_token: str, account_id: str, trackguid: str) -> dict | None:
+def get_current_zero_build_rank(
+    access_token: str, account_id: str, trackguid: str
+) -> dict | None:
     """Fetch current season zero build progress for an account."""
     url = f"{BASE_URL}/games/fortnite/trackprogress/{account_id}/byTrack/{trackguid}"
     resp = requests.get(
@@ -189,10 +207,10 @@ def division_name(division: int) -> str:
     return DIVISIONS[division] if division < len(DIVISIONS) else f"Division {division}"
 
 
-def append_snapshot(snapshot: dict) -> None:
+def append_snapshot(snapshot: dict, trackguid: str) -> None:
     """Append a snapshot to the ranks JSON file.
 
-    Format: {"dimes": {"timestamps": [...], "ranks": [...]}, ...}
+    Format: {"dimes": {"<trackguid>": {"timestamps": [...], "ranks": [...]}}, ...}
     """
     if RANKS_PATH.exists():
         data = json.loads(RANKS_PATH.read_text())
@@ -200,7 +218,8 @@ def append_snapshot(snapshot: dict) -> None:
         data = {}
 
     for name, (timestamp, rank) in snapshot.items():
-        entry = data.setdefault(name, {"timestamps": [], "ranks": []})
+        player = data.setdefault(name, {})
+        entry = player.setdefault(trackguid, {"timestamps": [], "ranks": []})
         entry["timestamps"].append(timestamp)
         entry["ranks"].append(rank)
 
@@ -211,7 +230,7 @@ def main():
     access_token = authenticate()
 
     print("Finding current zero build season...")
-    trackguid = get_current_track_guid(access_token, "ranked-zb")
+    trackguid = get_current_track_guid(access_token, "ranked-br-combined")
     if not trackguid:
         print("No active zero build season found.")
         return
@@ -227,17 +246,22 @@ def main():
             print(f"  No zero build ranking found for {name}.")
             continue
 
-        rank = progress.get("currentPlayerRanking")
-        snapshot[name] = (now, rank)
+        div = division_name(progress["currentDivision"])
+        numeric_rank = progress.get("currentPlayerRanking")
+        if numeric_rank is not None:
+            rank_value = [div, numeric_rank]
+        else:
+            pct = round(progress["promotionProgress"] * 100)
+            rank_value = [div, pct]
+        snapshot[name] = (now, rank_value)
 
         # Print to console
-        div = division_name(progress["currentDivision"])
-        if rank is not None:
-            print(f"  {div} (#{rank:,})")
+        if numeric_rank is not None:
+            print(f"  {div} (#{numeric_rank:,})")
         else:
-            print(f"  {div} ({progress['promotionProgress']:.0%} to next)")
+            print(f"  {div} ({pct}% to next)")
 
-    append_snapshot(snapshot)
+    append_snapshot(snapshot, trackguid)
     print(f"\nSnapshot saved to {RANKS_PATH}")
 
 
